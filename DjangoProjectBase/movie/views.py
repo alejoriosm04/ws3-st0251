@@ -1,12 +1,18 @@
 from django.shortcuts import render
 from django.http import HttpResponse
+from django.core.management import call_command
 
 from .models import Movie
+from io import StringIO
 
 import matplotlib.pyplot as plt
 import matplotlib
 import io
 import urllib, base64
+import os
+import numpy as np
+from openai import OpenAI
+from dotenv import load_dotenv, find_dotenv
 
 def home(request):
     #return HttpResponse('<h1>Welcome to Home Page</h1>')
@@ -123,3 +129,39 @@ def generate_bar_chart(data, xlabel, ylabel):
     buffer.close()
     graphic = base64.b64encode(image_png).decode('utf-8')
     return graphic
+
+
+def get_embedding(text, client, model="text-embedding-3-small"):
+   text = text.replace("\n", " ")
+   return client.embeddings.create(input = [text], model=model).data[0].embedding
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+def recommendations(request):
+    searchTerm = request.GET.get('searchMovie', '')
+    print(searchTerm)
+    items = Movie.objects.all()
+    idx = 0
+    movies = []
+
+    if searchTerm:
+        # Se lee del archivo .env la api key de openai
+        _ = load_dotenv('../openAI.env')
+        client = OpenAI(api_key=os.environ.get('openAI_api_key'))
+
+        emb_req = get_embedding(searchTerm, client)
+
+        sim = []
+        for i in range(len(items)):
+            emb = items[i].emb
+            emb = list(np.frombuffer(emb))
+            sim.append(cosine_similarity(emb,emb_req))
+        sim = np.array(sim)
+
+        idx = np.argmax(sim)
+        idx = int(idx)
+        print(items[idx].title + " haokla")
+        movies = Movie.objects.filter(title__icontains=items[idx].title)
+
+    return render(request, 'recommendations.html', {'searchTerm': searchTerm, 'movies': movies})
